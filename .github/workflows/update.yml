@@ -1,0 +1,76 @@
+name: Shadowrocket Stable Update
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # =========================
+      # 1. 更新 base（官方镜像）
+      # =========================
+      - name: Update base file
+        run: |
+          mkdir -p base
+
+          curl -L -o base/sr_top500_banlist_ad.conf \
+          https://johnshall.github.io/Shadowrocket-ADBlock-Rules-Forever/sr_top500_banlist_ad.conf
+
+      # =========================
+      # 2. 生成工作文件
+      # =========================
+      - name: Build custom config
+        run: |
+          cp base/sr_top500_banlist_ad.conf work.conf
+
+          cat << 'EOF' >> work.conf
+
+############################################
+# Custom RULE-SET Layer
+############################################
+
+RULE-SET,https://adrules.top/adrules_domainset.txt,REJECT
+RULE-SET,https://adrules.top/adrules.list,REJECT
+RULE-SET,https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt,REJECT
+RULE-SET,https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/anti-ad-sr.txt,REJECT
+EOF
+
+      # =========================
+      # 3. 替换 update-url
+      # =========================
+      - name: Set update-url
+        run: |
+          REPO_URL="https://raw.githubusercontent.com/winstonjoey/shadowrocket-rules/main/sr_top500_banlist_ad_custom.conf"
+
+          if grep -q "^update-url" work.conf; then
+            sed -i "s|^update-url.*|update-url,${REPO_URL}|" work.conf
+          else
+            echo "update-url,${REPO_URL}" >> work.conf
+          fi
+
+      # =========================
+      # 4. 输出最终文件
+      # =========================
+      - name: Export final config
+        run: |
+          mv work.conf sr_top500_banlist_ad_custom.conf
+
+      # =========================
+      # 5. 提交更新
+      # =========================
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add base/sr_top500_banlist_ad.conf sr_top500_banlist_ad_custom.conf
+
+          git commit -m "auto: sync base + build config" || echo "no changes"
+          git push
