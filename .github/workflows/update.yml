@@ -1,12 +1,15 @@
-name: Shadowrocket Stable Update
+name: Shadowrocket Production Update
 
 on:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  update:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,44 +20,73 @@ jobs:
         uses: actions/checkout@v4
 
       # =========================
-      # 2. 更新 base（官方文件缓存）
+      # 2. 下载官方配置
       # =========================
-      - name: Download official rule to base
+      - name: Download base config
         run: |
           mkdir -p base
-
-          curl -L -o base/sr_top500_banlist_ad.conf \
+          curl -L -o base.conf \
           https://johnshall.github.io/Shadowrocket-ADBlock-Rules-Forever/sr_top500_banlist_ad.conf
 
       # =========================
       # 3. 生成工作文件
       # =========================
-      - name: Build custom config
+      - name: Prepare config
         run: |
-          cp base/sr_top500_banlist_ad.conf work.conf
+          cp base.conf work.conf
 
       # =========================
-      # 4. 追加 RULE-SET（关键：必须 shell block）
+      # 4. 插入 RULE-SET（正确位置）
       # =========================
-      - name: Append RULE-SET
+      - name: Inject RULE-SET
         run: |
-          cat << 'EOF' >> work.conf
+          awk '
+          BEGIN {inserted=0}
 
-          ############################################
-          # Custom AdBlock RULE-SET Layer
-          ############################################
-          
-          RULE-SET,https://adrules.top/adrules_domainset.txt,REJECT
-          RULE-SET,https://adrules.top/adrules.list,REJECT
-          RULE-SET,https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt,REJECT
-          RULE-SET,https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/anti-ad-sr.txt,REJECT
-          
-          EOF
+          /^\[Rule\]/ {
+            print
+            print ""
+            print "# ===== Custom RULE-SET ====="
+            print "RULE-SET,https://adrules.top/adrules_domainset.txt,REJECT"
+            print "RULE-SET,https://adrules.top/adrules.list,REJECT"
+            print "RULE-SET,https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt,REJECT"
+            print "RULE-SET,https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/anti-ad-sr.txt,REJECT"
+            inserted=1
+            next
+          }
+
+          {print}
+          ' work.conf > tmp.conf && mv tmp.conf work.conf
 
       # =========================
-      # 5. 设置 update-url
+      # 5. 添加 DNS（你要求的）
       # =========================
-      - name: Set update-url
+      - name: Add DNS (AdGuard DoH)
+        run: |
+          awk '
+          BEGIN {in_general=0; added=0}
+
+          /^\[General\]/ {
+            print
+            in_general=1
+            next
+          }
+
+          in_general && /^dns-server/ {
+            print "dns-server = https://dns.adguard-dns.com/dns-query"
+            added=1
+            next
+          }
+
+          {print}
+          ' work.conf > tmp.conf
+
+          mv tmp.conf work.conf
+
+      # =========================
+      # 6. 修复 update-url
+      # =========================
+      - name: Fix update-url
         run: |
           REPO_URL="https://raw.githubusercontent.com/winstonjoey/shadowrocket-rules/main/sr_top500_banlist_ad_custom.conf"
 
@@ -65,21 +97,21 @@ jobs:
           fi
 
       # =========================
-      # 6. 输出最终文件
+      # 7. 输出文件
       # =========================
       - name: Export final config
         run: |
           mv work.conf sr_top500_banlist_ad_custom.conf
 
       # =========================
-      # 7. 提交更新
+      # 8. 提交
       # =========================
       - name: Commit & push
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add base/sr_top500_banlist_ad.conf sr_top500_banlist_ad_custom.conf
+          git add sr_top500_banlist_ad_custom.conf base.conf
 
-          git commit -m "auto: update shadowrocket rules" || echo "no changes"
+          git commit -m "auto: add AdGuard DNS + rules" || echo "no changes"
           git push
